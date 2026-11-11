@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Accordatore Vocale Accessibile</title>
+  
+  <!-- Configurazione PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Accordatore">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #000000;
+      color: #ffffff;
+      font-family: system-ui, -apple-system, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    
+    #touchZone {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      text-align: center;
+      box-sizing: border-box;
+      padding: 20px;
+    }
+
+    #touchZone:active {
+      background-color: #1a1a1a;
+    }
+
+    /* Gauge grafico rettangolare */
+    .gauge-container {
+      width: 90%;
+      max-width: 600px;
+      height: 120px;
+      margin-bottom: 30px;
+      position: relative;
+      background: linear-gradient(
+        to right,
+        #ff0000 0%,
+        #ff7700 20%,
+        #ffff00 35%,
+        #00ff00 50%,
+        #ffff00 65%,
+        #ff7700 80%,
+        #ff0000 100%
+      );
+      border: 4px solid #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+      overflow: hidden;
+    }
+
+    .gauge-center-line {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 4px;
+      height: 100%;
+      background-color: #ffffff;
+      transform: translateX(-50%);
+      z-index: 1;
+      opacity: 0.6;
+    }
+
+    /* Barra verticale ad alto contrasto con movimento fluido (LERP) */
+    .gauge-needle {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 10px;
+      height: 100%;
+      background-color: #ffffff;
+      box-shadow: 0 0 10px #000000;
+      transform: translateX(-50%);
+      z-index: 2;
+    }
+
+    .status-large {
+      font-size: 3.5rem;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .sub-status {
+      font-size: 1.8rem;
+      color: #aaaaaa;
+    }
+  </style>
+</head>
+<body>
+
+<div id="touchZone" role="button" tabindex="0">
+  <div class="gauge-container" id="gaugeBox">
+    <div class="gauge-center-line"></div>
+    <div class="gauge-needle" id="gaugeNeedle"></div>
+  </div>
+  <div class="status-large" id="mainStatus">TOCCA PER AVVIARE</div>
+  <div class="sub-status" id="subStatus">Tocca ovunque sullo schermo</div>
+</div>
+
+<script>
+  // Registrazione Service Worker PWA
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('Service Worker registrato:', reg.scope))
+        .catch(err => console.error('Errore registrazione Service Worker:', err));
+    });
+  }
+
+  const touchZone = document.getElementById('touchZone');
+  const mainStatus = document.getElementById('mainStatus');
+  const subStatus = document.getElementById('subStatus');
+  const gaugeNeedle = document.getElementById('gaugeNeedle');
+
+  let audioCtx = null;
+  let analyser = null;
+  let isRunning = false;
+  let isSpeaking = false;
+
+  const noteNames = ["Do", "Do diesis", "Re", "Re diesis", "Mi", "Fa", "Fa diesis", "Sol", "Sol diesis", "La", "La diesis", "Si"];
+
+  let lastValidNote = "";
+  let lastValidStatus = "";
+  let lastValidTime = 0;
+  let lastSpokenPhrase = "";
+
+  // Variabili per l'interpolazione fluida del gauge (LERP)
+  let currentPosPercent = 50;
+  let targetPosPercent = 50;
+  let currentCentsFiltered = 0;
+
+  const SOGLIA_VOLUME = 0.015;
+
+  let voceItaliana = null;
+
+  function scegliVoceItaliana() {
+    if (!("speechSynthesis" in window)) return;
+
+    const voci = window.speechSynthesis.getVoices();
+    if (!voci || voci.length === 0) return;
+
+    const italiane = voci.filter(voice =>
+      voice.lang && voice.lang.toLowerCase().startsWith("it")
+    );
+
+    if (italiane.length === 0) return;
+
+    const preferite = [
+      /\belsa\b/i,
+      /\b(alice|federica|paola|lucia|carla|sofia|elisa|silvia|serena)\b/i,
+      /female|donna|femminile/i
+    ];
+
+    for (const pattern of preferite) {
+      const trovata = italiane.find(voice => pattern.test(voice.name));
+      if (trovata) {
+        voceItaliana = trovata;
+        return;
+      }
+    }
+
+    voceItaliana = italiane[0];
+  }
+
+  if ("speechSynthesis" in window) {
+    scegliVoceItaliana();
+    window.speechSynthesis.onvoiceschanged = scegliVoceItaliana;
+  }
+
+  function parla(testo) {
+    if (!("speechSynthesis" in window)) return;
+
+    scegliVoceItaliana();
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(testo);
+    utterance.lang = "it-IT";
+    if (voceItaliana) utterance.voice = voceItaliana;
+    utterance.rate = 0.95;
+    utterance.pitch = 1.05;
+
+    // Disabilita l'analisi del microfono per evitare l'auto-ascolto dell'eco
+    utterance.onstart = function() {
+      isSpeaking = true;
+    };
+
+    utterance.onend = function() {
+      setTimeout(() => {
+        isSpeaking = false;
+      }, 300);
+    };
+
+    utterance.onerror = function() {
+      isSpeaking = false;
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function gestisciAnnuncioVocale(nota, stato) {
+    if (isSpeaking) return;
+
+    const statoParlato = stato === "troppo bassa"
+      ? "troppo basso"
+      : stato === "troppo alta"
+        ? "troppo alto"
+        : "accordato";
+
+    const frase = `${nota}, ${statoParlato}`;
+
+    if (frase !== lastSpokenPhrase) {
+      parla(frase);
+      lastSpokenPhrase = frase;
+    }
+  }
+
+  function getNoteFromFrequency(freq) {
+    const A4 = 440;
+    const noteNum = 12 * (Math.log(freq / A4) / Math.log(2)) + 69;
+    const roundedNote = Math.round(noteNum);
+    const noteIndex = (roundedNote % 12 + 12) % 12;
+    const exactFreq = A4 * Math.pow(2, (roundedNote - 69) / 12);
+    const cents = Math.floor(1200 * Math.log2(freq / exactFreq));
+    
+    return {
+      name: noteNames[noteIndex],
+      cents: cents
+    };
+  }
+
+  function autoCorrelate(buffer, sampleRate) {
+    const SIZE = buffer.length;
+    let rms = 0;
+
+    for (let i = 0; i < SIZE; i++) {
+      const val = buffer[i];
+      rms += val * val;
+    }
+    rms = Math.sqrt(rms / SIZE);
+
+    if (rms < SOGLIA_VOLUME) return -1;
+
+    let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++) {
+      if (Math.abs(buffer[i]) < thres) { r1 = i; break; }
+    }
+    for (let i = 1; i < SIZE / 2; i++) {
+      if (Math.abs(buffer[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+    }
+
+    const buf2 = buffer.slice(r1, r2);
+    const c = new Array(buf2.length).fill(0);
+    for (let i = 0; i < buf2.length; i++) {
+      for (let j = 0; j < buf2.length - i; j++) {
+        c[i] = c[i] + buf2[j] * buf2[j + i];
+      }
+    }
+
+    let d = 0;
+    while (c[d] > c[d + 1]) d++;
+    let maxval = -1, maxpos = -1;
+    for (let i = d; i < buf2.length; i++) {
+      if (c[i] > maxval) {
+        maxval = c[i];
+        maxpos = i;
+      }
+    }
+    let T0 = maxpos;
+
+    const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+    const a = (x1 + x3 - 2 * x2) / 2;
+    const b = (x3 - x1) / 2;
+    if (a) T0 = T0 - b / (2 * a);
+
+    return sampleRate / T0;
+  }
+
+  function updatePitch() {
+    if (audioCtx && audioCtx.state === 'running') {
+      const buf = new Float32Array(2048);
+      analyser.getFloatTimeDomainData(buf);
+      const freq = autoCorrelate(buf, audioCtx.sampleRate);
+
+      if (freq !== -1 && freq > 40 && freq < 2000) {
+        const note = getNoteFromFrequency(freq);
+        
+        currentCentsFiltered += (note.cents - currentCentsFiltered) * 0.25;
+
+        let stato = "";
+        if (Math.abs(currentCentsFiltered) <= 6) {
+          stato = "accordato";
+        } else if (currentCentsFiltered < -6) {
+          stato = "troppo bassa";
+        } else {
+          stato = "troppo alta";
+        }
+
+        const centsClamped = Math.max(-50, Math.min(50, currentCentsFiltered));
+        targetPosPercent = ((centsClamped + 50) / 100) * 100;
+
+        mainStatus.textContent = `${note.name}`;
+        subStatus.textContent = stato.toUpperCase();
+
+        lastValidNote = note.name;
+        lastValidStatus = stato;
+        lastValidTime = Date.now();
+
+        gestisciAnnuncioVocale(note.name, stato);
+      } else {
+        if (Date.now() - lastValidTime > 3000) {
+          mainStatus.textContent = "ASCOLTO...";
+          subStatus.textContent = "Tocca per ascoltare lo stato";
+          targetPosPercent = 50;
+          lastSpokenPhrase = "";
+        }
+      }
+    }
+
+    // Interpolazione visiva (LERP) a 60 FPS
+    currentPosPercent += (targetPosPercent - currentPosPercent) * 0.15;
+    gaugeNeedle.style.left = `${currentPosPercent.toFixed(2)}%`;
+
+    if (isRunning) {
+      requestAnimationFrame(updatePitch);
+    }
+  }
+
+  async function startTuner() {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+      });
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+
+      isRunning = true;
+      parla("Accordatore attivo");
+      updatePitch();
+    } catch (err) {
+      alert("Errore microfono: " + err.message);
+    }
+  }
+
+  function handleScreenTouch(e) {
+    if (e) e.preventDefault();
+
+    if (!isRunning) {
+      startTuner();
+    } else {
+      const tempoTrascorso = Date.now() - lastValidTime;
+      if (lastValidNote && tempoTrascorso < 4000) {
+        const statoParlato = lastValidStatus === "troppo bassa"
+          ? "troppo basso"
+          : lastValidStatus === "troppo alta"
+            ? "troppo alto"
+            : "accordato";
+        parla(`${lastValidNote}, ${statoParlato}`);
+      } else {
+        parla("Nessun suono rilevato");
+      }
+    }
+  }
+
+  touchZone.addEventListener('click', handleScreenTouch);
+</script>
+
+</body>
+</html>
