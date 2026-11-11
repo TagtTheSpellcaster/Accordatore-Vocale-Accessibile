@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Accordatore Vocale Accessibile</title>
   
-  <!-- Configurazione PWA -->
+  <!-- Configurazione PWA completa -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -38,18 +38,31 @@
       text-align: center;
       box-sizing: border-box;
       padding: 20px;
+      touch-action: none;
     }
 
     #touchZone:active {
       background-color: #1a1a1a;
     }
 
-    /* Gauge grafico rettangolare */
+    .mode-badge {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #00ffcc;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 15px;
+      background-color: rgba(0, 255, 204, 0.1);
+      padding: 8px 20px;
+      border-radius: 20px;
+      border: 1px solid #00ffcc;
+    }
+
     .gauge-container {
       width: 90%;
       max-width: 600px;
       height: 120px;
-      margin-bottom: 30px;
+      margin-bottom: 25px;
       position: relative;
       background: linear-gradient(
         to right,
@@ -79,7 +92,6 @@
       opacity: 0.6;
     }
 
-    /* Barra verticale ad alto contrasto con movimento fluido (LERP) */
     .gauge-needle {
       position: absolute;
       top: 0;
@@ -107,27 +119,27 @@
 <body>
 
 <div id="touchZone" role="button" tabindex="0">
+  <div class="mode-badge" id="modeDisplay">CROMATICO</div>
   <div class="gauge-container" id="gaugeBox">
     <div class="gauge-center-line"></div>
     <div class="gauge-needle" id="gaugeNeedle"></div>
   </div>
   <div class="status-large" id="mainStatus">TOCCA PER AVVIARE</div>
-  <div class="sub-status" id="subStatus">Tocca ovunque sullo schermo</div>
+  <div class="sub-status" id="subStatus">Scorri ai lati per cambiare strumento</div>
 </div>
 
 <script>
   // Registrazione Service Worker PWA
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('Service Worker registrato:', reg.scope))
-        .catch(err => console.error('Errore registrazione Service Worker:', err));
+      navigator.serviceWorker.register('./sw.js').catch(err => console.error(err));
     });
   }
 
   const touchZone = document.getElementById('touchZone');
   const mainStatus = document.getElementById('mainStatus');
   const subStatus = document.getElementById('subStatus');
+  const modeDisplay = document.getElementById('modeDisplay');
   const gaugeNeedle = document.getElementById('gaugeNeedle');
 
   let audioCtx = null;
@@ -137,46 +149,71 @@
 
   const noteNames = ["Do", "Do diesis", "Re", "Re diesis", "Mi", "Fa", "Fa diesis", "Sol", "Sol diesis", "La", "La diesis", "Si"];
 
+  // Definizione strumenti con nomi semplificati
+  const MODALITA_STRUMENTI = [
+    { id: "cromatico", nome: "Cromatico", corde: [] },
+    { 
+      id: "chitarra", 
+      nome: "Chitarra", 
+      corde: [
+        { numero: 1, nota: "Mi", freq: 329.63 }, // E4
+        { numero: 2, nota: "Si", freq: 246.94 }, // B3
+        { numero: 3, nota: "Sol", freq: 196.00 },// G3
+        { numero: 4, nota: "Re", freq: 146.83 }, // D3
+        { numero: 5, nota: "La", freq: 110.00 }, // A2
+        { numero: 6, nota: "Mi", freq: 82.41 }   // E2
+      ]
+    },
+    { 
+      id: "ukulele", 
+      nome: "Ukulele", 
+      corde: [
+        { numero: 1, nota: "La", freq: 440.00 }, // A4
+        { numero: 2, nota: "Mi", freq: 329.63 }, // E4
+        { numero: 3, nota: "Do", freq: 261.63 }, // C4
+        { numero: 4, nota: "Sol", freq: 392.00 } // G4
+      ]
+    },
+    { 
+      id: "basso", 
+      nome: "Basso", 
+      corde: [
+        { numero: 1, nota: "Sol", freq: 98.00 }, // G2
+        { numero: 2, nota: "Re", freq: 73.42 },  // D2
+        { numero: 3, nota: "La", freq: 55.00 },  // A1
+        { numero: 4, nota: "Mi", freq: 41.20 }   // E1
+      ]
+    }
+  ];
+
+  let indexModalita = 0;
+
   let lastValidNote = "";
   let lastValidStatus = "";
+  let lastValidCorda = "";
   let lastValidTime = 0;
   let lastSpokenPhrase = "";
 
-  // Variabili per l'interpolazione fluida del gauge (LERP)
   let currentPosPercent = 50;
   let targetPosPercent = 50;
   let currentCentsFiltered = 0;
 
   const SOGLIA_VOLUME = 0.015;
-
   let voceItaliana = null;
 
   function scegliVoceItaliana() {
     if (!("speechSynthesis" in window)) return;
-
     const voci = window.speechSynthesis.getVoices();
     if (!voci || voci.length === 0) return;
 
-    const italiane = voci.filter(voice =>
-      voice.lang && voice.lang.toLowerCase().startsWith("it")
-    );
-
+    const italiane = voci.filter(v => v.lang && v.lang.toLowerCase().startsWith("it"));
     if (italiane.length === 0) return;
 
-    const preferite = [
-      /\belsa\b/i,
-      /\b(alice|federica|paola|lucia|carla|sofia|elisa|silvia|serena)\b/i,
-      /female|donna|femminile/i
-    ];
-
+    const preferite = [/\belsa\b/i, /\b(alice|federica|paola|lucia|carla|sofia|elisa|silvia|serena)\b/i, /female|donna|femminile/i];
     for (const pattern of preferite) {
-      const trovata = italiane.find(voice => pattern.test(voice.name));
-      if (trovata) {
-        voceItaliana = trovata;
-        return;
-      }
+      const trovata = italiane.find(v => pattern.test(v.name));
+      if (trovata) { voceItaliana = trovata; return; }
     }
-
     voceItaliana = italiane[0];
   }
 
@@ -197,25 +234,22 @@
     utterance.rate = 0.95;
     utterance.pitch = 1.05;
 
-    // Disabilita l'analisi del microfono per evitare l'auto-ascolto dell'eco
-    utterance.onstart = function() {
-      isSpeaking = true;
-    };
-
-    utterance.onend = function() {
-      setTimeout(() => {
-        isSpeaking = false;
-      }, 300);
-    };
-
-    utterance.onerror = function() {
-      isSpeaking = false;
-    };
+    utterance.onstart = () => { isSpeaking = true; };
+    utterance.onend = () => { setTimeout(() => { isSpeaking = false; }, 300); };
+    utterance.onerror = () => { isSpeaking = false; };
 
     window.speechSynthesis.speak(utterance);
   }
 
-  function gestisciAnnuncioVocale(nota, stato) {
+  function cambiaModalita(direzione) {
+    indexModalita = (indexModalita + direzione + MODALITA_STRUMENTI.length) % MODALITA_STRUMENTI.length;
+    const strum = MODALITA_STRUMENTI[indexModalita];
+    modeDisplay.textContent = strum.nome.toUpperCase();
+    lastSpokenPhrase = "";
+    parla(strum.nome);
+  }
+
+  function gestisciAnnuncioVocale(nota, stato, infoCorda) {
     if (isSpeaking) return;
 
     const statoParlato = stato === "troppo bassa"
@@ -224,7 +258,12 @@
         ? "troppo alto"
         : "accordato";
 
-    const frase = `${nota}, ${statoParlato}`;
+    let frase = "";
+    if (infoCorda) {
+      frase = `Corda ${infoCorda.numero} ${infoCorda.nota}, ${statoParlato}`;
+    } else {
+      frase = `${nota}, ${statoParlato}`;
+    }
 
     if (frase !== lastSpokenPhrase) {
       parla(frase);
@@ -233,23 +272,42 @@
   }
 
   function getNoteFromFrequency(freq) {
+    const strum = MODALITA_STRUMENTI[indexModalita];
+    
+    let cordaTrovata = null;
+    if (strum.corde.length > 0) {
+      let minDiff = Infinity;
+      for (const c of strum.corde) {
+        const diff = Math.abs(1200 * Math.log2(freq / c.freq));
+        if (diff < minDiff) {
+          minDiff = diff;
+          cordaTrovata = c;
+        }
+      }
+    }
+
     const A4 = 440;
     const noteNum = 12 * (Math.log(freq / A4) / Math.log(2)) + 69;
     const roundedNote = Math.round(noteNum);
     const noteIndex = (roundedNote % 12 + 12) % 12;
-    const exactFreq = A4 * Math.pow(2, (roundedNote - 69) / 12);
+    
+    let exactFreq = A4 * Math.pow(2, (roundedNote - 69) / 12);
+    if (cordaTrovata) {
+      exactFreq = cordaTrovata.freq;
+    }
+
     const cents = Math.floor(1200 * Math.log2(freq / exactFreq));
     
     return {
-      name: noteNames[noteIndex],
-      cents: cents
+      name: cordaTrovata ? cordaTrovata.nota : noteNames[noteIndex],
+      cents: cents,
+      cordaInfo: cordaTrovata
     };
   }
 
   function autoCorrelate(buffer, sampleRate) {
     const SIZE = buffer.length;
     let rms = 0;
-
     for (let i = 0; i < SIZE; i++) {
       const val = buffer[i];
       rms += val * val;
@@ -299,7 +357,7 @@
       analyser.getFloatTimeDomainData(buf);
       const freq = autoCorrelate(buf, audioCtx.sampleRate);
 
-      if (freq !== -1 && freq > 40 && freq < 2000) {
+      if (freq !== -1 && freq > 30 && freq < 2000) {
         const note = getNoteFromFrequency(freq);
         
         currentCentsFiltered += (note.cents - currentCentsFiltered) * 0.25;
@@ -316,25 +374,29 @@
         const centsClamped = Math.max(-50, Math.min(50, currentCentsFiltered));
         targetPosPercent = ((centsClamped + 50) / 100) * 100;
 
-        mainStatus.textContent = `${note.name}`;
+        if (note.cordaInfo) {
+          mainStatus.textContent = `Corda ${note.cordaInfo.numero}: ${note.name}`;
+        } else {
+          mainStatus.textContent = `${note.name}`;
+        }
         subStatus.textContent = stato.toUpperCase();
 
         lastValidNote = note.name;
         lastValidStatus = stato;
+        lastValidCorda = note.cordaInfo;
         lastValidTime = Date.now();
 
-        gestisciAnnuncioVocale(note.name, stato);
+        gestisciAnnuncioVocale(note.name, stato, note.cordaInfo);
       } else {
         if (Date.now() - lastValidTime > 3000) {
           mainStatus.textContent = "ASCOLTO...";
-          subStatus.textContent = "Tocca per ascoltare lo stato";
+          subStatus.textContent = "Scorri ai lati per cambiare strumento";
           targetPosPercent = 50;
           lastSpokenPhrase = "";
         }
       }
     }
 
-    // Interpolazione visiva (LERP) a 60 FPS
     currentPosPercent += (targetPosPercent - currentPosPercent) * 0.15;
     gaugeNeedle.style.left = `${currentPosPercent.toFixed(2)}%`;
 
@@ -355,16 +417,39 @@
       source.connect(analyser);
 
       isRunning = true;
-      parla("Accordatore attivo");
+      parla(`Accordatore attivo. ${MODALITA_STRUMENTI[indexModalita].nome}`);
       updatePitch();
     } catch (err) {
       alert("Errore microfono: " + err.message);
     }
   }
 
-  function handleScreenTouch(e) {
-    if (e) e.preventDefault();
+  let touchStartX = 0;
+  let touchStartY = 0;
 
+  touchZone.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
+  }, { passive: true });
+
+  touchZone.addEventListener('touchend', (e) => {
+    const touchEndX = e.changedTouches[0].screenX;
+    const touchEndY = e.changedTouches[0].screenY;
+    const diffX = touchEndX - touchStartX;
+    const diffY = touchEndY - touchStartY;
+
+    if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+      if (diffX < 0) {
+        cambiaModalita(1);
+      } else {
+        cambiaModalita(-1);
+      }
+    } else if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
+      gestisciToccoSingolo();
+    }
+  }, { passive: true });
+
+  function gestisciToccoSingolo() {
     if (!isRunning) {
       startTuner();
     } else {
@@ -375,14 +460,28 @@
           : lastValidStatus === "troppo alta"
             ? "troppo alto"
             : "accordato";
-        parla(`${lastValidNote}, ${statoParlato}`);
+        if (lastValidCorda) {
+          parla(`Corda ${lastValidCorda.numero} ${lastValidCorda.nota}, ${statoParlato}`);
+        } else {
+          parla(`${lastValidNote}, ${statoParlato}`);
+        }
       } else {
         parla("Nessun suono rilevato");
       }
     }
   }
 
-  touchZone.addEventListener('click', handleScreenTouch);
+  touchZone.addEventListener('click', (e) => {
+    if (e.pointerType === 'mouse') {
+      gestisciToccoSingolo();
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') cambiaModalita(1);
+    if (e.key === 'ArrowLeft') cambiaModalita(-1);
+    if (e.key === ' ' || e.key === 'Enter') gestisciToccoSingolo();
+  });
 </script>
 
 </body>
