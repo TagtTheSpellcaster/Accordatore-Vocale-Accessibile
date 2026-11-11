@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Accordatore Vocale Accessibile</title>
+  <title>Accordatore Vocale Accessibile v1.1.0</title>
+  <meta name="version" content="1.1.0">
   
   <!-- Configurazione PWA completa -->
   <link rel="manifest" href="manifest.json">
@@ -129,7 +130,6 @@
 </div>
 
 <script>
-  // Registrazione Service Worker PWA
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch(err => console.error(err));
@@ -149,39 +149,38 @@
 
   const noteNames = ["Do", "Do diesis", "Re", "Re diesis", "Mi", "Fa", "Fa diesis", "Sol", "Sol diesis", "La", "La diesis", "Si"];
 
-  // Definizione strumenti con nomi semplificati
   const MODALITA_STRUMENTI = [
     { id: "cromatico", nome: "Cromatico", corde: [] },
     { 
       id: "chitarra", 
       nome: "Chitarra", 
       corde: [
-        { numero: 1, nota: "Mi", freq: 329.63 }, // E4
-        { numero: 2, nota: "Si", freq: 246.94 }, // B3
-        { numero: 3, nota: "Sol", freq: 196.00 },// G3
-        { numero: 4, nota: "Re", freq: 146.83 }, // D3
-        { numero: 5, nota: "La", freq: 110.00 }, // A2
-        { numero: 6, nota: "Mi", freq: 82.41 }   // E2
+        { numero: 1, nota: "Mi", freq: 329.63 },
+        { numero: 2, nota: "Si", freq: 246.94 },
+        { numero: 3, nota: "Sol", freq: 196.00 },
+        { numero: 4, nota: "Re", freq: 146.83 },
+        { numero: 5, nota: "La", freq: 110.00 },
+        { numero: 6, nota: "Mi", freq: 82.41 }
       ]
     },
     { 
       id: "ukulele", 
       nome: "Ukulele", 
       corde: [
-        { numero: 1, nota: "La", freq: 440.00 }, // A4
-        { numero: 2, nota: "Mi", freq: 329.63 }, // E4
-        { numero: 3, nota: "Do", freq: 261.63 }, // C4
-        { numero: 4, nota: "Sol", freq: 392.00 } // G4
+        { numero: 1, nota: "La", freq: 440.00 },
+        { numero: 2, nota: "Mi", freq: 329.63 },
+        { numero: 3, nota: "Do", freq: 261.63 },
+        { numero: 4, nota: "Sol", freq: 392.00 }
       ]
     },
     { 
       id: "basso", 
       nome: "Basso", 
       corde: [
-        { numero: 1, nota: "Sol", freq: 98.00 }, // G2
-        { numero: 2, nota: "Re", freq: 73.42 },  // D2
-        { numero: 3, nota: "La", freq: 55.00 },  // A1
-        { numero: 4, nota: "Mi", freq: 41.20 }   // E1
+        { numero: 1, nota: "Sol", freq: 98.00 },
+        { numero: 2, nota: "Re", freq: 73.42 },
+        { numero: 3, nota: "La", freq: 55.00 },
+        { numero: 4, nota: "Mi", freq: 41.20 }
       ]
     }
   ];
