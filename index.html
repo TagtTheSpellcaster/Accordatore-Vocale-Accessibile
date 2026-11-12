@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Accordatore Vocale Accessibile v1.1.0</title>
-  <meta name="version" content="1.1.0">
   
   <!-- Configurazione PWA completa -->
   <link rel="manifest" href="manifest.json">
@@ -145,7 +144,7 @@
   let audioCtx = null;
   let analyser = null;
   let isRunning = false;
-  let isSpeaking = false;
+  let isSpeaking = false; // Flag globale per disabilitare l'ascolto durante QUALSIASI pronuncia
 
   const noteNames = ["Do", "Do diesis", "Re", "Re diesis", "Mi", "Fa", "Fa diesis", "Sol", "Sol diesis", "La", "La diesis", "Si"];
 
@@ -221,8 +220,12 @@
     window.speechSynthesis.onvoiceschanged = scegliVoceItaliana;
   }
 
+  // Funzione centralizzata di sintesi: blocca l'ascolto IMMEDIATAMENTE
   function parla(testo) {
     if (!("speechSynthesis" in window)) return;
+
+    // Imposta immediatamente il flag a true PRIMA di cancellare o inviare la nuova frase
+    isSpeaking = true;
 
     scegliVoceItaliana();
     window.speechSynthesis.cancel();
@@ -233,9 +236,20 @@
     utterance.rate = 0.95;
     utterance.pitch = 1.05;
 
-    utterance.onstart = () => { isSpeaking = true; };
-    utterance.onend = () => { setTimeout(() => { isSpeaking = false; }, 300); };
-    utterance.onerror = () => { isSpeaking = false; };
+    utterance.onstart = () => {
+      isSpeaking = true;
+    };
+
+    // Sblocca l'ascolto solo 350 ms DOPO la fine della pronuncia per dissipare l'eco
+    utterance.onend = () => {
+      setTimeout(() => {
+        isSpeaking = false;
+      }, 350);
+    };
+
+    utterance.onerror = () => {
+      isSpeaking = false;
+    };
 
     window.speechSynthesis.speak(utterance);
   }
@@ -245,6 +259,7 @@
     const strum = MODALITA_STRUMENTI[indexModalita];
     modeDisplay.textContent = strum.nome.toUpperCase();
     lastSpokenPhrase = "";
+    // Annuncio dello strumento: parla() muta subito il microfono
     parla(strum.nome);
   }
 
@@ -351,7 +366,8 @@
   }
 
   function updatePitch() {
-    if (audioCtx && audioCtx.state === 'running') {
+    // Se l'app sta parlando per QUALSIASI motivo, ignora completamente l'input microfonico
+    if (!isSpeaking && audioCtx && audioCtx.state === 'running') {
       const buf = new Float32Array(2048);
       analyser.getFloatTimeDomainData(buf);
       const freq = autoCorrelate(buf, audioCtx.sampleRate);
